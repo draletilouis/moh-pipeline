@@ -4,9 +4,15 @@ Takes CSVs from data/raw/, applies cleaning & unpivot to long format, writes to 
 """
 
 import os
+import sys
 import pandas as pd
 from pathlib import Path
 import numpy as np
+
+# Add project root to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from observability import ObservedPipeline, HealthDataValidator
 
 RAW_DIR = Path("data/raw")
 CLEAN_DIR = Path("data/clean")
@@ -121,18 +127,105 @@ def process_file(path: Path):
     return long
 
 def main():
-    for path in RAW_DIR.glob("*.csv"):
-        try:
-            long = process_file(path)
-            if long is None or long.empty:
-                print(f"Skipping {path.name} - no valid data")
-                continue
-            out_name = CLEAN_DIR / path.name.replace(".csv", "_clean.csv")
-            long.to_csv(out_name, index=False)
-            print(f"Wrote cleaned file {out_name}")
-        except Exception as e:
-            print(f"Error processing {path.name}: {e}")
-            print(f"Skipping {path.name}")
+    # Use ObservedPipeline context manager
+    with ObservedPipeline('uganda_health_etl', 'transform') as observer:
+
+        csv_files = list(RAW_DIR.glob("*.csv"))
+        print(f"Found {len(csv_files)} files to transform")
+
+        total_input_rows = 0
+        total_output_rows = 0
+        files_processed = 0
+        files_failed = 0
+
+        for path in csv_files:
+            try:
+                print(f"\nProcessing {path.name}...")
+                long = process_file(path)
+
+                if long is None or long.empty:
+                    print(f"Skipping {path.name} - no valid data")
+                    files_failed += 1
+                    continue
+
+                # Data quality validation on transformed data
+                validator = HealthDataValidator(observer)
+                passed, summary = validator.validate_health_data(long, f'transform_{path.stem}')
+
+                if not passed:
+                    print(f"[WARNING] Quality checks failed for {path.name}")
+                    validator.print_report()
+
+                # Write cleaned file
+                out_name = CLEAN_DIR / path.name.replace(".csv", "_clean.csv")
+                long.to_csv(out_name, index=False)
+                print(f"[SUCCESS] Wrote cleaned file {out_name} ({len(long)} rows)")
+
+                # Track lineage
+                if len(long.columns) >= 3:
+                    observer.track_lineage(
+                        target_table='clean_csv',
+                        target_column='indicator',
+                        source_file=str(path),
+                        source_column=long.columns[0],
+                        transformation_logic='Detected header, cleaned whitespace',
+                        transformation_type='direct_copy'
+                    )
+
+                    observer.track_lineage(
+                        target_table='clean_csv',
+                        target_column='year_label',
+                        source_file=str(path),
+                        source_column='year_columns',
+                        transformation_logic='Unpivoted year columns to rows',
+                        transformation_type='unpivot'
+                    )
+
+                    observer.track_lineage(
+                        target_table='clean_csv',
+                        target_column='value',
+                        source_file=str(path),
+                        source_column='year_columns',
+                        transformation_logic='Unpivoted values, removed commas, converted to numeric',
+                        transformation_type='unpivot'
+                    )
+
+                # Track original row count (approximate from raw file)
+                try:
+                    raw_df = pd.read_csv(path)
+                    total_input_rows += len(raw_df)
+                except:
+                    pass
+
+                total_output_rows += len(long)
+                files_processed += 1
+
+            except Exception as e:
+                print(f"[ERROR] Error processing {path.name}: {e}")
+                files_failed += 1
+
+                # Log the error
+                observer.log_quality_check(
+                    check_name=f'transform_success_{path.stem}',
+                    passed=False,
+                    check_category='consistency',
+                    table_name=f'transform_{path.stem}',
+                    metric_value=0.0,
+                    threshold_value=1.0,
+                    details={'error': str(e)}
+                )
+
+        # Complete the run
+        observer.complete_run(
+            status='success' if files_failed == 0 else 'failed',
+            records_input=total_input_rows,
+            records_processed=total_output_rows,
+            records_loaded=total_output_rows,
+            records_rejected=total_input_rows - total_output_rows if total_input_rows > 0 else 0
+        )
+
+        print(f"\n[SUCCESS] Transform complete: {files_processed} files processed, {files_failed} failed")
+        print(f"  Input: {total_input_rows} rows -> Output: {total_output_rows} rows")
 
 if __name__ == "__main__":
     main()

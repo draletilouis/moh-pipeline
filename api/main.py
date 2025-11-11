@@ -486,6 +486,294 @@ async def health_check():
     finally:
         conn.close()
 
+
+# =====================================================
+# OBSERVABILITY & MONITORING ENDPOINTS
+# =====================================================
+
+@app.get("/observability/pipeline-health")
+async def get_pipeline_health():
+    """
+    Get pipeline health metrics (last 30 days)
+
+    Returns success rates, run counts, and average duration for each pipeline
+    """
+    conn = None
+    try:
+        db_config = get_db_config()
+        conn = psycopg2.connect(**db_config)
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT
+                pipeline_name,
+                total_runs,
+                successful_runs,
+                failed_runs,
+                success_rate,
+                avg_duration_seconds,
+                last_run_at
+            FROM metadata.v_pipeline_health
+            ORDER BY last_run_at DESC
+        """)
+
+        columns = [desc[0] for desc in cursor.description]
+        results = []
+        for row in cursor.fetchall():
+            results.append(dict(zip(columns, row)))
+
+        return {
+            "pipeline_health": results,
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.get("/observability/recent-runs")
+async def get_recent_runs(limit: int = Query(10, ge=1, le=100)):
+    """
+    Get recent pipeline runs with execution details
+
+    - **limit**: Maximum number of runs to return (1-100)
+    """
+    conn = None
+    try:
+        db_config = get_db_config()
+        conn = psycopg2.connect(**db_config)
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT
+                run_id,
+                pipeline_name,
+                pipeline_stage,
+                source_file,
+                started_at,
+                completed_at,
+                status,
+                records_processed,
+                records_loaded,
+                records_rejected,
+                execution_duration_seconds,
+                error_message
+            FROM metadata.pipeline_runs
+            ORDER BY started_at DESC
+            LIMIT %s
+        """, (limit,))
+
+        columns = [desc[0] for desc in cursor.description]
+        results = []
+        for row in cursor.fetchall():
+            results.append(dict(zip(columns, row)))
+
+        return {
+            "runs": results,
+            "count": len(results),
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.get("/observability/data-quality")
+async def get_data_quality_metrics(days: int = Query(7, ge=1, le=90)):
+    """
+    Get data quality metrics summary
+
+    - **days**: Number of days to look back (1-90)
+    """
+    conn = None
+    try:
+        db_config = get_db_config()
+        conn = psycopg2.connect(**db_config)
+        cursor = conn.cursor()
+
+        # Overall quality by category
+        cursor.execute("""
+            SELECT
+                check_category,
+                COUNT(*) as total_checks,
+                SUM(CASE WHEN passed THEN 1 ELSE 0 END) as passed_checks,
+                ROUND(100.0 * SUM(CASE WHEN passed THEN 1 ELSE 0 END) / COUNT(*), 2) as pass_rate
+            FROM metadata.data_quality_metrics
+            WHERE checked_at > NOW() - INTERVAL '%s days'
+            GROUP BY check_category
+            ORDER BY check_category
+        """, (days,))
+
+        columns = [desc[0] for desc in cursor.description]
+        quality_by_category = []
+        for row in cursor.fetchall():
+            quality_by_category.append(dict(zip(columns, row)))
+
+        # Recent failures
+        cursor.execute("""
+            SELECT
+                check_name,
+                check_category,
+                table_name,
+                column_name,
+                metric_value,
+                threshold_value,
+                checked_at
+            FROM metadata.data_quality_metrics
+            WHERE passed = FALSE
+              AND checked_at > NOW() - INTERVAL '%s days'
+            ORDER BY checked_at DESC
+            LIMIT 20
+        """, (days,))
+
+        columns = [desc[0] for desc in cursor.description]
+        failed_checks = []
+        for row in cursor.fetchall():
+            failed_checks.append(dict(zip(columns, row)))
+
+        return {
+            "quality_by_category": quality_by_category,
+            "failed_checks": failed_checks,
+            "period_days": days,
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.get("/observability/lineage/{table_name}/{column_name}")
+async def get_field_lineage(table_name: str, column_name: str):
+    """
+    Get field-level lineage for a specific column
+
+    - **table_name**: Target table name
+    - **column_name**: Target column name
+    """
+    conn = None
+    try:
+        db_config = get_db_config()
+        conn = psycopg2.connect(**db_config)
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT
+                source_file,
+                source_sheet,
+                source_column,
+                transformation_logic,
+                transformation_type,
+                recorded_at
+            FROM metadata.field_lineage
+            WHERE target_table = %s
+              AND target_column = %s
+            ORDER BY recorded_at DESC
+            LIMIT 50
+        """, (table_name, column_name))
+
+        columns = [desc[0] for desc in cursor.description]
+        lineage = []
+        for row in cursor.fetchall():
+            lineage.append(dict(zip(columns, row)))
+
+        return {
+            "table": table_name,
+            "column": column_name,
+            "lineage": lineage,
+            "count": len(lineage),
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.get("/observability/source-files")
+async def get_source_files():
+    """
+    Get registered source files with processing statistics
+    """
+    conn = None
+    try:
+        db_config = get_db_config()
+        conn = psycopg2.connect(**db_config)
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT
+                file_id,
+                file_name,
+                file_path,
+                file_size_bytes,
+                sheet_count,
+                row_count,
+                column_count,
+                first_seen,
+                last_processed,
+                processing_count,
+                status
+            FROM metadata.source_files
+            ORDER BY last_processed DESC NULLS LAST
+        """)
+
+        columns = [desc[0] for desc in cursor.description]
+        files = []
+        for row in cursor.fetchall():
+            files.append(dict(zip(columns, row)))
+
+        return {
+            "source_files": files,
+            "count": len(files),
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.get("/observability/dashboard")
+async def get_monitoring_dashboard():
+    """
+    Get comprehensive monitoring dashboard data
+
+    Returns pipeline health, data quality, and recent activity
+    """
+    try:
+        # Gather all metrics
+        pipeline_health = await get_pipeline_health()
+        recent_runs = await get_recent_runs(limit=5)
+        data_quality = await get_data_quality_metrics(days=7)
+        source_files = await get_source_files()
+
+        return {
+            "dashboard": {
+                "pipeline_health": pipeline_health["pipeline_health"],
+                "recent_runs": recent_runs["runs"],
+                "data_quality": data_quality,
+                "source_files": source_files["source_files"]
+            },
+            "generated_at": datetime.now().isoformat()
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
