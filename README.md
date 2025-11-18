@@ -49,13 +49,13 @@ A **production-ready data engineering platform** that transforms Uganda's health
 
 ## Key Features
 
-### 🔄 Complete ETL Pipeline
+### Complete ETL Pipeline
 - **Extract** from multiple Excel files with automatic discovery and sheet detection
 - **Transform** with intelligent header detection and data unpivoting
 - **Load** to dimensional warehouse with UPSERT logic and integrity checks
 - **Scalable** - Supports unlimited Excel files, automatically processes all `.xlsx` and `.xls` files
 
-### 🏗️ Star Schema Design
+### Star Schema Design
 - Optimized dimensional modeling for fast analytical queries
 - 4 dimension tables, 1 fact table
 - Proper foreign key relationships and indexing
@@ -71,19 +71,19 @@ A **production-ready data engineering platform** that transforms Uganda's health
 - **Pipeline Monitoring** - Real-time execution metrics and success rates
 - **Quality Scoring** - 0-100 score for each pipeline run
 
-### 🔐 API Security
+### API Security
 - **API Key Authentication** - Header-based authentication for all protected endpoints
 - **CORS Configuration** - Configurable allowed origins for production
 - **Input Validation** - Pydantic models with automatic validation
 - **Rate Limiting Ready** - Infrastructure supports future rate limiting
 
-### 🚀 RESTful API
+### RESTful API
 - **15+ Endpoints** - 9 business data + 6 observability endpoints
 - **Interactive Documentation** - Auto-generated Swagger UI and ReDoc
 - **Flexible Querying** - Filter, sort, paginate, and aggregate
 - **Time Series Support** - Track indicators over fiscal years
 
-### 📈 Advanced Analytics
+### Advanced Analytics
 - Hash-based change detection for idempotent processing
 - Time series analysis with year-over-year comparisons
 - Statistical aggregations and rankings
@@ -1093,13 +1093,3 @@ This project is developed for **educational and research purposes** to support p
 Built with modern data engineering practices for **reliable, scalable, production-grade health analytics**.
 
 **Key Technologies**: Python • PostgreSQL • FastAPI • pandas • SQLAlchemy
-
----
-
-<div align="center">
-
-**[⬆ Back to Top](#uganda-health-sector-data-pipeline)**
-
-Made with ❤️ for better health data analytics
-
-</div>
