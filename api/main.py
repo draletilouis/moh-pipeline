@@ -3,7 +3,7 @@ FastAPI application for Uganda Health Pipeline
 Provides REST API access to health sector performance indicators
 """
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
@@ -14,6 +14,7 @@ from datetime import datetime
 from sqlalchemy import create_engine
 from pathlib import Path
 from dotenv import load_dotenv
+from api.auth import verify_api_key
 
 # Load local environment variables if present
 load_dotenv(dotenv_path=Path("conf/.env"))
@@ -26,13 +27,16 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
-# Add CORS middleware
+# CORS Configuration
+# In production, replace with specific allowed origins
+allowed_origins = os.getenv("ALLOWED_ORIGINS", "*").split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
+    allow_origins=allowed_origins,  # Set ALLOWED_ORIGINS in .env for production
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_headers=["X-API-Key", "Content-Type", "Authorization"],
 )
 
 # Database configuration
@@ -110,6 +114,7 @@ async def test_endpoint():
 
 @app.get("/health/indicators", response_model=List[HealthIndicator])
 async def get_indicators(
+    client: dict = Depends(verify_api_key),
     limit: int = Query(100, description="Maximum number of records to return", ge=1, le=1000),
     offset: int = Query(0, description="Number of records to skip", ge=0),
     indicator: Optional[str] = Query(None, description="Filter by indicator name (partial match)"),
@@ -188,7 +193,7 @@ async def get_indicators(
             pass
 
 @app.get("/health/indicators/metadata")
-async def get_indicators_metadata():
+async def get_indicators_metadata(client: dict = Depends(verify_api_key)):
     """Get metadata about available indicators"""
     conn = get_db_connection()
 
@@ -248,7 +253,10 @@ async def get_indicators_metadata():
         conn.close()
 
 @app.get("/health/indicators/{indicator_name}/timeseries")
-async def get_indicator_timeseries(indicator_name: str):
+async def get_indicator_timeseries(
+    indicator_name: str,
+    client: dict = Depends(verify_api_key)
+):
     """Get complete time series for a specific indicator"""
     conn = get_db_connection()
 
@@ -320,6 +328,7 @@ async def get_indicator_timeseries(indicator_name: str):
 
 @app.get("/health/rankings/top-performers")
 async def get_top_performers(
+    client: dict = Depends(verify_api_key),
     period: Optional[str] = Query(None, description="Time period to rank (default: latest)"),
     limit: int = Query(10, description="Number of results", ge=1, le=50),
     metric: str = Query("total_value", description="Ranking metric", enum=["total_value", "avg_value"])
@@ -388,7 +397,7 @@ async def get_top_performers(
         conn.close()
 
 @app.get("/health/stats")
-async def get_stats():
+async def get_stats(client: dict = Depends(verify_api_key)):
     """Get overall dataset statistics"""
     conn = get_db_connection()
 
@@ -420,7 +429,7 @@ async def get_stats():
         conn.close()
 
 @app.get("/health/quality/dashboard")
-async def get_quality_dashboard():
+async def get_quality_dashboard(client: dict = Depends(verify_api_key)):
     """Get data quality metrics and validation status"""
     conn = get_db_connection()
 
@@ -492,7 +501,7 @@ async def health_check():
 # =====================================================
 
 @app.get("/observability/pipeline-health")
-async def get_pipeline_health():
+async def get_pipeline_health(client: dict = Depends(verify_api_key)):
     """
     Get pipeline health metrics (last 30 days)
 
@@ -535,7 +544,10 @@ async def get_pipeline_health():
 
 
 @app.get("/observability/recent-runs")
-async def get_recent_runs(limit: int = Query(10, ge=1, le=100)):
+async def get_recent_runs(
+    client: dict = Depends(verify_api_key),
+    limit: int = Query(10, ge=1, le=100)
+):
     """
     Get recent pipeline runs with execution details
 
@@ -585,7 +597,10 @@ async def get_recent_runs(limit: int = Query(10, ge=1, le=100)):
 
 
 @app.get("/observability/data-quality")
-async def get_data_quality_metrics(days: int = Query(7, ge=1, le=90)):
+async def get_data_quality_metrics(
+    client: dict = Depends(verify_api_key),
+    days: int = Query(7, ge=1, le=90)
+):
     """
     Get data quality metrics summary
 
@@ -652,7 +667,11 @@ async def get_data_quality_metrics(days: int = Query(7, ge=1, le=90)):
 
 
 @app.get("/observability/lineage/{table_name}/{column_name}")
-async def get_field_lineage(table_name: str, column_name: str):
+async def get_field_lineage(
+    table_name: str,
+    column_name: str,
+    client: dict = Depends(verify_api_key)
+):
     """
     Get field-level lineage for a specific column
 
@@ -701,7 +720,7 @@ async def get_field_lineage(table_name: str, column_name: str):
 
 
 @app.get("/observability/source-files")
-async def get_source_files():
+async def get_source_files(client: dict = Depends(verify_api_key)):
     """
     Get registered source files with processing statistics
     """
@@ -747,7 +766,7 @@ async def get_source_files():
 
 
 @app.get("/observability/dashboard")
-async def get_monitoring_dashboard():
+async def get_monitoring_dashboard(client: dict = Depends(verify_api_key)):
     """
     Get comprehensive monitoring dashboard data
 
